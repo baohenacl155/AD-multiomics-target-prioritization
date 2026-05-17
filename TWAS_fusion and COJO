@@ -1,0 +1,188 @@
+library(DrugTargetMR)
+DrugTargetMR::update_package()
+rm(list = ls())
+#######三层次fusion########
+#____________________________________________________________________________________________#
+
+## file_sumstat为转换后的文件路径。
+file_sumstat <- fusion_prepare_sumstat(file_path = c("AD GWAS.txt"),
+                                       out_path ="./" )
+
+
+#____________________________________________________________________________________________#
+##组织层面：GTEX V8
+# 构建循环文件
+## 获取weights和weights_dir对应的参数，制作成data.frame
+dir_untar <- "E:/跨组织转录组关联研究-课程汇总/偏头痛TWAS/data_fusion/权重文件/Mancuso-GTEx多组织基因权重/GTExv8.ALL2/"
+dir_weight <- list.files(dir_untar,recursive = FALSE, full.names = TRUE)
+file_weights <-  unlist(lapply(dir_weight, FUN = function(x){ dir(x,pattern = ".pos$",recursive = F,full.names = T)}))
+file_weights <- file_weights[!grepl(".nofilter.pos",file_weights)]
+df_weights <- data.frame(file_weights = file_weights,weights_dir = dirname(file_weights))
+df_weights$tissues <- basename(df_weights$file_weights)
+
+## 查看
+View(df_weights)
+
+
+## 如果不选择的话，这一步不要执行
+## 如果选择其中几种组织进行执行，可以配对权重文件进行删减。
+## 例如选择脑组织和肠道组织。
+#df_weights_brain <- df_weights[grepl("Brain",df_weights$weights_dir),]
+#df_weights_Colon <- df_weights[grepl("Colon",df_weights$weights_dir),]
+#df_weights_Intestine <- df_weights[grepl("Intestine",df_weights$weights_dir),]
+#df_weights <- rbind(df_weights_brain,df_weights_Colon,df_weights_Intestine)
+
+
+
+
+## 提前导入用于fusion分析的sumstat_data数据，类型为data.frame，可减少循环过程中的运算量
+sumstat_data <- data.table::fread("data_prepare/ADHD.sumstats",data.table=F)
+
+## 使用循环，挨个组织执行FUSION分析
+for (i in 1:nrow(df_weights)) {
+  fusion_assoc(sumstat_data = sumstat_data,
+               weights = df_weights$file_weights[i],
+               weights_dir =df_weights$weights_dir[i],
+               ref_ld_chr_prefix = "E:/跨组织转录组关联研究-课程汇总/偏头痛TWAS/data_fusion/LDREF_hg19/EUR/1000G.EUR.",
+               ref_ld_chr_num = c(1:22),                 #######应该改成1比22
+               out_path ="results/results_fusion/",
+               out_prefix = df_weights$tissues[i])
+}
+
+
+
+
+### 结果整理
+res_fusion_files <- dir("results/results_fusion/",pattern = ".csv",recursive = F,full.names = T)
+res_fusion <- data.frame()
+
+for (i in res_fusion_files) {
+  temp_res <- read.csv(i)
+  temp_res <- temp_res[!is.na(temp_res$TWAS.P),]
+  temp_res$TWAS.P.fdr <- p.adjust(temp_res$TWAS.P,method = "fdr")
+  
+  res_fusion <- rbind(res_fusion,temp_res)
+}
+
+# 保留TWAS.P.fdr<0.05对应的行，并将结果写出
+res_fusion_f <- res_fusion[res_fusion$TWAS.P.fdr < 0.05,]
+res_fusion_f$gene_id <- substr(res_fusion_f$ID,1,regexpr("\\.",res_fusion_f$ID)-1)
+res_fusion_f <- merge(res_fusion_f,Ensembl_GRCh38,by="gene_id",all.x=T)
+write.csv(res_fusion,file = "results/results_fusion/GTExv8.ALL.summary.gene_p_fdr.csv")
+write.csv(res_fusion_f,file = "results/results_fusion/GTExv8.ALL.summary.gene_p_fdr_filtered.csv")
+
+# 统计每个组织中的基因数量
+sum1 <- as.data.frame(table(res_fusion_f$PANEL))
+write.csv(sum1,file = "results/results_fusion/每个组织基因数量.csv")
+# 统计一共发现多少个基因
+sum2 <- length(unique(res_fusion_f$gene_id))
+write.csv(sum2,file = "results/results_fusion/一共发现多少个基因.csv")
+
+
+
+## 血液TWAS
+prepare_sumstat <- data.table::fread("AD GWAS.sumstats",data.table = F)
+fusion_assoc(sumstat_data =prepare_sumstat,
+             weights = "E:/GWAS数据存放/data_fusion权重文件/权重文件/血液TWAS/YFS.BLOOD.RNAARR/YFS.BLOOD.RNAARR.pos",
+             weights_dir = "E:/GWAS数据存放/data_fusion权重文件/权重文件/血液TWAS/YFS.BLOOD.RNAARR/",##报错就回退一个文件夹，现已回退
+             ref_ld_chr_prefix = "E:/GWAS数据存放/data_fusion权重文件/LDREF_hg19/EUR/1000G.EUR.",
+             ref_ld_chr_num = 1:22,
+             out_path = "Fusion-YFS.BLOOD.eqtl/")
+
+fusion_blood <- data.table::fread("Fusion-YFS.BLOOD.eqtl/fusion_assoc_summary.csv",data.table=F)
+
+fusion_blood$TWAS.P.fdr <- p.adjust(fusion_blood$TWAS.P,method = "fdr")
+
+write.csv(fusion_blood,file = "Fusion-YFS.BLOOD.eqtl/fusion_blood.gene_p_fdr_filtered.csv")
+
+
+#____________________________________________________________________________________________#
+##细胞层面：
+
+fusion_assoc(sumstat_data =prepare_sumstat,
+             weights = "E:/GWAS数据存放/data_fusion权重文件/权重文件/CONTENT构建GTEx基因权重和单细胞基因权重/weight_matrices/weight_matrices/CONTENT_all_CLUES.pos",
+             weights_dir = "E:/GWAS数据存放/data_fusion权重文件/权重文件/CONTENT构建GTEx基因权重和单细胞基因权重/content_clues/content/",
+             ref_ld_chr_prefix = "E:/GWAS数据存放/data_fusion权重文件/LDREF_hg19/EUR/1000G.EUR.",
+             ref_ld_chr_num = 1:22,
+             out_path = "fusion-single_cell/")
+
+fusion_CELL <- data.table::fread("fusion-single_cell/fusion_assoc_summary.csv",data.table=F)
+
+fusion_CELL$TWAS.P.fdr <- p.adjust(fusion_CELL$TWAS.P,method = "fdr")
+
+write.csv(fusion_CELL,file = "fusion-single_cell/fusion_CELL.gene_p_fdr_filtered.csv")
+
+#____________________________________________________________________________________________#
+###magma分析
+## 坐标轴转换：将hg38版坐标轴，转换为hg19版本。
+transform_hg38ToHg19(file_path = "./data_prepare/finngen_R11_I9_VTE.txt",
+                     out_path = "./data_prepare/")
+
+
+## 增加样本量信息:23367	430366
+append_col_customs(file_path = "./data_prepare/finngen_R11_I9_VTE_hg19.txt",
+                   add_col_names = "samplesize",
+                   add_col_value = 23367+430366,
+                   out_path = "./data_prepare/")
+
+## 执行magma分析
+postgwas_magma(magma_exe = "F:/fusion/data_magma/MAGMA/magma/magma_v1.10_win/magma.exe",
+               gwas_path ="./data_prepare/AD GWAS.txt",
+               bfile = "F:/fusion/data_magma/MAGMA/LD/g1000_eur/g1000_eur.",
+               geneloc_file = "F:/fusion/data_magma/MAGMA/MAGMA_gene_boundary_files/ENSGv110.coding.genes.GRCh37.txt",  # 基因注释为hg37版本
+               geneset_anno = T,
+               geneset_file = "F:/fusion/data_magma/MAGMA/Gene_set_files/MSigDB_20231Hs_MAGMA.txt",
+               genecovar_file = "F:/fusion/data_magma/MAGMA/Gene_expression_files/gtex_v8_ts_avg_log2TPM_54tissues.txt",
+               out_path = "./results/result_magma",
+               out_prefix = "magma")
+
+
+
+## 结果查看与整理
+magma_genes <- read.csv("F:/fusion/VTE/magma/magma_step2_snp_loc.genes.out.mapped.csv")
+magma_genes$p_fdr <- p.adjust(magma_genes$P,method = "fdr")
+magma_genes_f <- magma_genes[magma_genes$p_fdr < 0.05,]
+
+# 将结果写出
+write.csv(magma_genes_f,file = "F:/fusion/VTE/magma_snp2genes_filter_adj_p.csv",row.names = F)
+#____________________________________________________________________________________________#
+##fusion-cojo分析
+library(DrugTargetMR)
+
+### glist_hg19文件中提供的是基因名，故需要将FUSION TWAS分析结果中的ensembl id改为gene symbol!
+aaa_dat <- data.table::fread("F:/fusion/data_raw/GTExv8.ALL.summary.gene_p_fdr.csv",data.table = F)
+aaa_dat$ENSG <- substr(aaa_dat$ID,1,regexpr("\\.",aaa_dat$ID)-1)
+
+# 查看aaa_dat的ID是否是gene symbol。如果是gene_id，需要将ID转换成gene symbol
+View(aaa_dat)
+
+# Ensembl_GRCh38；Ensembl_GRCh37，均可。gene_id与gene_name，与不同参考基因组版本无关
+aaa_dat1 <- merge(aaa_dat,Ensembl_GRCh38[,c("gene_id","gene_name")],by.x="ENSG",by.y="gene_id")
+
+
+# 将ID改成gene_name
+aaa_dat1$ID <- aaa_dat1$gene_name
+
+
+
+# 筛选候选基因进行分析【这一步的目的是保证，后续fusion分析中的结果不受其他基因的干扰】
+candidate <- c("INO80E"," LACTB","GIGYF1")
+aaa_dat1 <- aaa_dat1[aaa_dat1$ID %in% candidate,]
+aaa_dat1 <- aaa_dat1[aaa_dat1$TWAS.P.fdr < 0.05,]
+
+# 将文件写出
+file_genesymbol <- "F:/fusion/data_raw/GTExv8.ALL.summary.gene_p_fdr.csv"
+data.table::fwrite(aaa_dat1,file = file_genesymbol,quote = F,sep = "\t",row.names = F)
+
+?fusion_cojo
+fusion_cojo(input = file_genesymbol,
+            out_path = "F:/fusion/FUSION-COJO/",
+            out_prefix = "candidate",
+            sumstats = "F:/fusion/fuxian/data_prepare/AD GWAS.sumstats",
+            ref_ld_chr_prefix = "F:/fusion/data_fusion/LDREF/EUR/1000G.EUR.",
+            ref_ld_chr_num =  c(2,22),
+            locus_win = 5e+05,
+            p_adj_method = "fdr",
+            plot = T,
+            plot_legend = "joint",
+            glist_hg19 = "F:/fuxian/data-prepare/fusion-glist/glist-hg19")
